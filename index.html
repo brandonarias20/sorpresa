@@ -1,0 +1,232 @@
+<!doctype html>
+
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Corazón de puntitos — Te amo mamiii</title>
+  <style>
+    html,body{height:100%;margin:0;background:#0b0b0d;display:flex;align-items:center;justify-content:center;font-family:system-ui,Arial}
+    canvas{display:block;max-width:100%;height:auto}
+    .wrap{width:100%;height:100%;position:relative;overflow:hidden}
+    .message{
+      position:absolute;left:50%;top:55%;transform:translate(-50%,-50%);
+      font-size:48px;color:#ff4d6d;font-weight:800;letter-spacing:2px;opacity:0;
+      text-shadow: 0 6px 24px rgba(255,77,109,0.18);
+      pointer-events:none;transition:opacity 700ms ease, transform 700ms cubic-bezier(.2,.8,.2,1);
+    }
+    .message.show{opacity:1;transform:translate(-50%,-50%) scale(1.02);} 
+    @media (max-width:600px){.message{font-size:28px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="c"></canvas>
+    <div id="msg" class="message">te amo mamiii ❤</div>
+  </div>  <script>
+    // Corazón de puntitos que se forman y revelan el mensaje.
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const msg = document.getElementById('msg');
+
+    let W = canvas.width = innerWidth;
+    let H = canvas.height = innerHeight;
+
+    window.addEventListener('resize', () => {
+      W = canvas.width = innerWidth;
+      H = canvas.height = innerHeight;
+      initTargets();
+    });
+
+    // Parametric heart curve (unit shape) using classic formula
+    // t in [0, 2PI]
+    function heartPoint(t){
+      // Classic heart curve
+      const x = 16 * Math.pow(Math.sin(t), 3);
+      const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+      return {x, y};
+    }
+
+    // Generate target positions forming the heart
+    let targets = [];
+    function initTargets(){
+      targets = [];
+      // Number of dots depends on screen size
+      const baseCount = Math.floor((W * H) / 2500); // heuristic
+      const count = Math.max(120, Math.min(800, baseCount));
+
+      // get bounding box of the unit heart to scale nicely
+      // sample many points and normalize
+      const samples = 400;
+      let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+      const pts = [];
+      for(let i=0;i<samples;i++){
+        const t = (i / samples) * Math.PI * 2;
+        const p = heartPoint(t);
+        pts.push(p);
+        if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;
+        if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y;
+      }
+      const heartW = maxX - minX;
+      const heartH = maxY - minY;
+
+      // center the heart in canvas (slightly upper center)
+      const scale = Math.min(W * 0.38 / heartW, H * 0.45 / heartH);
+      const cx = W / 2;
+      const cy = H / 2 - H * 0.06;
+
+      // To fill the interior nicely, we randomly pick t and add some radial jitter
+      for(let i=0;i<count;i++){
+        const t = Math.random() * Math.PI * 2;
+        const base = heartPoint(t);
+        // jitter inward to fill the interior
+        const r = Math.pow(Math.random(), 0.9) * 0.9; // bias toward center
+        const tx = cx + ((base.x - (minX + heartW/2)) * scale) * r * 1.02;
+        const ty = cy + ((base.y - (minY + heartH/2)) * scale) * r * 1.02;
+        targets.push({x:tx,y:ty});
+      }
+
+      // Shuffle targets for interesting arrival order
+      for (let i = targets.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [targets[i], targets[j]] = [targets[j], targets[i]];
+      }
+
+      // assign arrival delays based on distance from top to create formation wave
+      const center = {x:cx,y:cy};
+      targets.forEach((t,i)=>{ t.delay = i * 6 + Math.random()*300; });
+
+      // create particles
+      initParticles();
+    }
+
+    // Particle system
+    let particles = [];
+    function initParticles(){
+      particles = [];
+      const n = targets.length;
+      for(let i=0;i<n;i++){
+        // start outside the canvas at random positions
+        const angle = Math.random()*Math.PI*2;
+        const radius = Math.max(W,H) * (0.4 + Math.random()*0.6);
+        const sx = W/2 + Math.cos(angle)*radius;
+        const sy = H/2 + Math.sin(angle)*radius;
+        particles.push({
+          x: sx, y: sy,
+          vx: (Math.random()-0.5)*6,
+          vy: (Math.random()-0.5)*6,
+          tx: targets[i].x, ty: targets[i].y,
+          delay: targets[i].delay,
+          arrived: false,
+          progress: 0 // 0->1 as it moves to target
+        });
+      }
+      formed = false;
+      msg.classList.remove('show');
+      revealTimer = 0;
+    }
+
+    // Animation loop
+    let last = performance.now();
+    let formed = false;
+    let revealTimer = 0;
+
+    function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
+
+    function update(dt){
+      let allArrived = true;
+      for(let i=0;i<particles.length;i++){
+        const p = particles[i];
+        if(p.arrived) continue;
+        if(p.delay > 0){
+          p.delay -= dt;
+          allArrived = false;
+          continue;
+        }
+        // move progress toward 1
+        p.progress += dt * 0.003 * (0.8 + Math.random()*0.8);
+        if(p.progress >= 1){
+          p.progress = 1;
+          p.arrived = true;
+        } else {
+          allArrived = false;
+        }
+        const t = easeOutCubic(p.progress);
+        // simple interpolation
+        p.x = p.x + (p.tx - p.x) * (0.12 + 0.68 * t * (1 - p.progress));
+        p.y = p.y + (p.ty - p.y) * (0.12 + 0.68 * t * (1 - p.progress));
+      }
+
+      // once all arrived, start reveal timer
+      if(allArrived && !formed){
+        formed = true;
+      }
+      if(formed){
+        revealTimer += dt;
+        if(revealTimer > 600){
+          msg.classList.add('show');
+        }
+      }
+    }
+
+    function draw(){
+      ctx.clearRect(0,0,W,H);
+      // subtle background glow
+      // draw each particle as a soft red dot
+      for(const p of particles){
+        // size based on progress
+        const size = 2.4 + (p.progress || 0) * 3.6;
+        // small glow
+        const grad = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,size*3);
+        grad.addColorStop(0,'rgba(255,77,109,0.95)');
+        grad.addColorStop(0.25,'rgba(255,77,109,0.7)');
+        grad.addColorStop(0.6,'rgba(255,77,109,0.12)');
+        grad.addColorStop(1,'rgba(255,77,109,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,size,0,Math.PI*2);
+        ctx.fill();
+      }
+
+      // optional sparkle over formed heart after formation
+      if(formed){
+        for(let i=0;i<7;i++){
+          const idx = Math.floor(Math.random()*particles.length);
+          const p = particles[idx];
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.beginPath();
+          ctx.arc(p.x + (Math.random()-0.5)*10, p.y + (Math.random()-0.5)*10, 1+Math.random()*2, 0, Math.PI*2);
+          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.fill();
+          ctx.globalCompositeOperation = 'source-over';
+        }
+      }
+    }
+
+    function loop(now){
+      const dt = now - last;
+      last = now;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // Kickoff
+    initTargets();
+    requestAnimationFrame(loop);
+
+    // Restart on click or tap
+    window.addEventListener('click', ()=>{
+      // small re-shuffle and start again
+      initTargets();
+    });
+
+    // For accessibility: allow pressing space to retrigger
+    window.addEventListener('keydown',(e)=>{
+      if(e.code==='Space'){
+        e.preventDefault();initTargets();
+      }
+    });
+  </script>
+  </body>
+</html>
